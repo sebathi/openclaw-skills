@@ -77,6 +77,8 @@ Update for the new day:
 Save the file. Reply ONLY: NO_REPLY.
 ```
 
+> **Note:** WhatsApp inline buttons only work with the official Business API. With personal WhatsApp (Baileys bridge), use the numbered list format instead.
+
 ### 4. Handle user confirmations
 
 When the user replies with a number (e.g. "1", "done 2", "1 and 3"):
