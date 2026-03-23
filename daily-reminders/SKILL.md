@@ -1,109 +1,263 @@
 ---
 name: daily-reminders
-description: Set up a persistent daily reminder system with a numbered task list delivered via WhatsApp. Tasks are checked off by number, recur daily, and one-off reminders auto-expire. Use when the user wants a recurring reminder system, asks to "remind me to do X every day", wants a todo/checklist sent periodically, or wants to track daily tasks with check-off confirmation.
+description: Persistent daily reminder system with Telegram delivery, SQLite backend (Node.js), snooze, subtasks, and daily reports. Falls back to JSON if SQLite unavailable. Supports recurring and one-off tasks with interactive buttons.
 ---
 
-# Daily Reminders
+# Daily Reminders v2
 
-A daily task list system for OpenClaw. Sends a numbered pending list via WhatsApp every 30 minutes (configurable window). Users reply with a number to mark tasks done. Recurring tasks reset at midnight; one-off tasks expire when done.
+A daily task management system for OpenClaw. Sends pending tasks via Telegram with interactive buttons (done, snooze, reschedule). Backed by SQLite with JSON fallback. All scripts are Node.js (v25, no external deps).
 
 ## How It Works
 
-1. **Task list file** (`memory/tasks.json`) — source of truth for today's tasks
-2. **Reminder cron** — runs every 30 min in a time window, sends pending tasks
-3. **Reset cron** — runs at midnight, resets recurring tasks and removes one-off tasks
-4. **User confirms** by replying a number → agent updates the file
+1. **SQLite database** (`memory/reminders.db`) — source of truth for tasks, daily status, and history
+2. **JSON fallback** (`memory/recordatorios-hoy.json`) — used when SQLite is unavailable (limited features)
+3. **Config** (`memory/reminders-config.json`) — backend choice, frequency, window, snooze options
+4. **Reminder cron** — runs every N minutes in a time window, sends pending tasks via Telegram
+5. **Reset cron** — runs at midnight, creates daily tasks for the new day, logs skipped tasks
+6. **Report cron** — runs at 20:00, sends daily summary with completion stats
 
 ## Setup
 
-### 1. Create the task list file
+```bash
+node skills/daily-reminders/scripts/init.mjs /path/to/workspace
+```
 
-Create `memory/tasks.json` in the workspace:
+The init script will:
+1. Detect SQLite availability (`node:sqlite` built-in or `better-sqlite3`)
+2. Ask for reminder frequency, time window, and snooze options
+3. Migrate existing `recordatorios-hoy.json` if present
+4. Save config to `memory/reminders-config.json`
 
+## Config File Schema
+
+`memory/reminders-config.json`:
 ```json
 {
-  "date": "YYYY-MM-DD",
-  "tasks": [
-    {"id": 1, "emoji": "💊", "text": "Take pill", "done": false, "recurring": true},
-    {"id": 2, "emoji": "📞", "text": "Call John", "done": false, "recurring": false}
-  ]
+  "backend": "sqlite",
+  "frequencyMinutes": 30,
+  "windowStart": 8,
+  "windowEnd": 20,
+  "snoozeOptions": ["30m", "1h", "2h", "4h"]
 }
 ```
 
-- `recurring: true` → resets to `done: false` each midnight
-- `recurring: false` → removed at midnight (one-off)
-- `done: true` → silenced until reset
+## Adding Tasks
 
-### 2. Create the reminder cron
+### Recurring tasks
+Tasks that reset daily. Tell the agent:
+> "Add a recurring reminder to take my pill 💊"
+
+The agent should call:
+```bash
+# Via db.mjs: addTask(db, { emoji: "💊", text: "Take pill", recurring: true })
+```
+
+### One-off tasks
+Tasks that disappear once done:
+> "Remind me to call the dentist"
+
+### Subtasks (SQLite only)
+> "Add subtask 'Pack clothes' to task 5"
+
+```bash
+# Via db.mjs: addSubtask(db, 5, { emoji: "👕", text: "Pack clothes" })
+```
+
+## Snooze
+
+When a user presses 💤 Snooze on a task, send a follow-up message with buttons for each snooze duration from config:
+
+| Button | Callback |
+|--------|----------|
+| 30 min | `task_snooze:ID:30m` |
+| 1 hora | `task_snooze:ID:1h` |
+| 2 horas | `task_snooze:ID:2h` |
+| 4 horas | `task_snooze:ID:4h` |
+
+Text command alternative: "snooze 3 2h" (snooze task 3 for 2 hours).
+
+**JSON mode limitation:** Snooze is not available in JSON mode.
+
+## Reports
+
+### Automatic daily report (20:00)
+Sent via the report cron. Shows completion percentage, done/pending breakdown, and a 7-day trend chart (SQLite only).
+
+### On-demand
+> "Show me my task report" or "How did I do this week?"
+
+Use: `node skills/daily-reminders/scripts/daily-report.mjs /path/to/workspace`
+
+## Callback Handling
+
+When Telegram buttons are pressed, process via:
+```bash
+node skills/daily-reminders/scripts/handle-callback.mjs <workspace> <action> <taskId> [extra]
+```
+
+| Callback pattern | Action | Script args |
+|-----------------|--------|-------------|
+| `task_done:ID` | Mark done | `done ID` |
+| `task_tomorrow:ID` | Reschedule to tomorrow | `tomorrow ID` |
+| `task_next_week:ID` | Reschedule to next Monday | `next_week ID` |
+| `task_snooze:ID` | Show snooze sub-menu | `snooze ID` |
+| `task_snooze:ID:DURATION` | Snooze for duration | `snooze ID DURATION` |
+| `task_subtasks:ID` | Show subtasks | `subtasks ID` |
+
+## Scripts
+
+All scripts accept workspace path as first argument or read `OPENCLAW_WORKSPACE` env var.
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/init.mjs` | Interactive setup |
+| `scripts/migrate.mjs` | Migrate JSON → SQLite |
+| `scripts/db.mjs` | Shared DB module (imported by other scripts) |
+| `scripts/get-pending.mjs` | Output pending tasks as JSON |
+| `scripts/reset-day.mjs` | Midnight reset logic |
+| `scripts/daily-report.mjs` | Daily summary text |
+| `scripts/handle-callback.mjs` | Process button callbacks |
+
+## Cron Prompt Templates
+
+### Reminder Cron — SQLite Backend
 
 ```
-Schedule: */30 8-20 * * * (TZ: user's timezone)
+Schedule: */30 8-20 * * * (adjust frequency and window per config)
 sessionTarget: isolated
 delivery: none
 ```
 
-Payload prompt:
 ```
-Read /path/to/workspace/memory/tasks.json.
-If 'date' is not today (YYYY-MM-DD), reply ONLY: NO_REPLY.
-If today and all tasks have done=true, reply ONLY: NO_REPLY.
-If there are tasks with done=false, use the message tool
-(action=send, channel=whatsapp, to=USER_NUMBER) to send exactly:
+Run: node {{workspace}}/skills/daily-reminders/scripts/get-pending.mjs {{workspace}}
 
-📋 Pending today:
-[number]. [emoji] [text]
+If the output is an empty array [], reply ONLY: NO_REPLY.
+
+Otherwise, for each task in the JSON array, send a Telegram message:
+  channel: telegram
+  to: 358425961
+
+Message format:
+  [emoji] [text]
+
+With inline buttons:
+  ✅ Hecho → callback_data: task_done:[id]
+  💤 Snooze → callback_data: task_snooze:[id]
+  📅 Mañana → callback_data: task_tomorrow:[id]
+  📆 Próxima semana → callback_data: task_next_week:[id]
+
+If the task has subtask_count > 0, add button:
+  📎 Subtareas → callback_data: task_subtasks:[id]
+
+Group all tasks into a single message if there are ≤5 tasks. Otherwise send individually.
+No extra text beyond the task messages.
+```
+
+### Reminder Cron — JSON Backend
+
+```
+Schedule: */30 8-20 * * * (adjust per config)
+sessionTarget: isolated
+delivery: none
+```
+
+```
+Read {{workspace}}/memory/recordatorios-hoy.json.
+If 'date' is not today (YYYY-MM-DD), reply ONLY: NO_REPLY.
+If all tasks have done=true, reply ONLY: NO_REPLY.
+If there are tasks with done=false, send a Telegram message:
+  channel: telegram
+  to: 358425961
+
+📋 Pendientes hoy:
+[id]. [emoji] [text]
 (only tasks with done=false)
 
-Reply with the number to mark as done.
+With inline buttons per task:
+  ✅ Hecho → callback_data: task_done:[id]
+  📅 Mañana → callback_data: task_tomorrow:[id]
+  📆 Próxima semana → callback_data: task_next_week:[id]
 
 No extra text.
 ```
 
-### 3. Create the midnight reset cron
+### Snooze Sub-Menu Prompt
+
+When receiving callback `task_snooze:ID` (without duration):
+```
+Read {{workspace}}/memory/reminders-config.json for snoozeOptions.
+Send a Telegram message:
+  channel: telegram
+  to: 358425961
+
+💤 ¿Cuánto tiempo?
+
+With inline buttons (one per snooze option):
+  [duration label] → callback_data: task_snooze:[ID]:[duration]
+
+E.g. for options ["30m","1h","2h","4h"]:
+  30 min → task_snooze:3:30m
+  1 hora → task_snooze:3:1h
+  2 horas → task_snooze:3:2h
+  4 horas → task_snooze:3:4h
+```
+
+### Reset Cron
 
 ```
-Schedule: 0 0 * * * (TZ: user's timezone)
+Schedule: 0 0 * * *
 sessionTarget: isolated
 delivery: none
 ```
 
-Payload prompt:
 ```
-Read /path/to/workspace/memory/tasks.json.
-Update for the new day:
-1. Set 'date' to today (YYYY-MM-DD)
-2. For each task with recurring=true, set done=false
-3. Remove all tasks with recurring=false
-Save the file. Reply ONLY: NO_REPLY.
+Run: node {{workspace}}/skills/daily-reminders/scripts/reset-day.mjs {{workspace}}
+Reply ONLY: NO_REPLY.
 ```
 
-> **Note:** WhatsApp inline buttons only work with the official Business API. With personal WhatsApp (Baileys bridge), use the numbered list format instead.
+### Report Cron
 
-### 4. Handle user confirmations
+```
+Schedule: 0 20 * * *
+sessionTarget: isolated
+delivery: none
+```
 
-When the user replies with a number (e.g. "1", "done 2", "1 and 3"):
-- Read `tasks.json`
-- Set `done: true` for the matching task(s)
-- Save the file
-- Confirm which tasks are now done and which remain
+```
+Run: node {{workspace}}/skills/daily-reminders/scripts/daily-report.mjs {{workspace}}
+Send the output as a Telegram message:
+  channel: telegram
+  to: 358425961
+No extra text.
+```
 
-## Adding One-Off Reminders
+### Callback Handler Prompt
 
-When the user says "remind me to X":
-1. Read `tasks.json`
-2. Add a new task with the next available `id`, appropriate emoji, and `recurring: false`
-3. Save the file
-4. Confirm it was added — it will appear in the next reminder cycle
+When receiving a callback from Telegram buttons matching `task_*`:
+```
+Parse the callback_data. Format: action:taskId[:extra]
+Run: node {{workspace}}/skills/daily-reminders/scripts/handle-callback.mjs {{workspace}} [action] [taskId] [extra]
 
-## Customization
+Read the JSON output.
+If action was "snooze_menu", send the snooze sub-menu (see above).
+If action was "subtasks", send the subtask list as a message.
+Otherwise, send a brief confirmation (e.g. "✅ Listo" or "💤 Snooze 2h").
+```
 
-| Parameter | Default | Notes |
-|---|---|---|
-| Frequency | `*/30` | Change to `*/15` for 15-min, `0 *` for hourly |
-| Window start | `8` | Hour (24h) to start sending |
-| Window end | `20` | Hour (24h) to stop (last run at HH:30) |
-| Reset time | `0 0` | Midnight; change if needed |
+## JSON Backend Limitations
 
-## File Schema Reference
+When using the JSON fallback (`backend: "json"`), the following features are **not available**:
+- Snooze (requires timestamp tracking)
+- Subtasks (requires relational parent_id)
+- Historical stats and trend reports (no task_log table)
+- Granular action logging
 
-See `references/schema.md` for the full JSON schema and field descriptions.
+All other features (add, done, tomorrow, next week, daily report) work normally.
+
+## DB Schema Reference
+
+See `references/schema.md` for the full SQLite schema and JSON schema.
+
+## API Design Note
+
+All scripts expose a consistent interface (workspace path → JSON output) designed to be compatible with a future remote API (Fase 2). The `db.mjs` module exports functions that can be wrapped in HTTP handlers without modification.
