@@ -166,7 +166,10 @@ export function getPendingTasks(db, date) {
 }
 
 export function markDone(db, taskId, date) {
-  db.prepare("UPDATE daily_tasks SET done = 1 WHERE task_id = ? AND date = ?").run(taskId, date);
+  // Remove any future-dated entry for this task (e.g. rescheduled to tomorrow)
+  db.prepare("DELETE FROM daily_tasks WHERE task_id = ? AND date > ?").run(taskId, date);
+  // Upsert done=true for today
+  db.prepare("INSERT OR REPLACE INTO daily_tasks (task_id, date, done) VALUES (?, ?, 1)").run(taskId, date);
   db.prepare("INSERT INTO task_log (task_id, action, scheduled_for) VALUES (?, 'done', ?)").run(taskId, date);
 }
 
