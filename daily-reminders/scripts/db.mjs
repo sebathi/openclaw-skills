@@ -216,16 +216,18 @@ export function getDailyStats(db, date) {
 }
 
 export function getHistoricalStats(db) {
+  const today = todayStr();
   return db.prepare(`
     SELECT date,
            COUNT(*) as total,
            SUM(done) as done,
            COUNT(*) - SUM(done) as pending
     FROM daily_tasks
+    WHERE date <= ?
     GROUP BY date
     ORDER BY date DESC
     LIMIT 30
-  `).all();
+  `).all(today);
 }
 
 // ---------------------------------------------------------------------------
