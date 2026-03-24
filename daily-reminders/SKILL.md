@@ -1,9 +1,31 @@
 ---
 name: daily-reminders
+version: 2.1.0
 description: Persistent daily reminder system with Telegram delivery, SQLite backend (Node.js), snooze, subtasks, and daily reports. Falls back to JSON if SQLite unavailable. Supports recurring and one-off tasks with interactive buttons.
 ---
 
-# Daily Reminders v2
+# Daily Reminders v2.1.0
+
+## Changelog
+
+### v2.1.0 (2026-03-23)
+- **fix:** `markDone` always closes task on today's date, removes any future-dated entry (e.g. task rescheduled to tomorrow and then marked done same day)
+- **fix:** Historical stats and trend report now exclude future dates (`date <= today`)
+
+### v2.0.0 (2026-03-23)
+- Full rewrite with SQLite backend via `node:sqlite` (built-in Node ≥22.5)
+- Interactive init script with SQLite detection and JSON fallback
+- Per-task Telegram inline buttons: Done, Snooze, Tomorrow, Next week
+- Configurable snooze durations
+- Subtasks with parent_id relation
+- Full action history (task_log) for procrastination tracking
+- Daily report cron at 20:00 with completion stats and 7-day trend
+- Migration script from v1 JSON format
+
+### v1.0.0
+- Basic daily task list via WhatsApp
+- Check-off by replying a number
+- Recurring tasks reset at midnight
 
 A daily task management system for OpenClaw. Sends pending tasks via Telegram with interactive buttons (done, snooze, reschedule). Backed by SQLite with JSON fallback. All scripts are Node.js (v25, no external deps).
 
