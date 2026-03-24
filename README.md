@@ -6,9 +6,9 @@ A collection of [OpenClaw](https://openclaw.ai) skills by [@sebathi](https://git
 
 | Skill | Version | Description |
 |---|---|---|
-| [daily-reminders](./daily-reminders) | v2 | Daily task manager with Telegram delivery, SQLite backend, snooze, subtasks, and procrastination reports |
+| [daily-reminders](./daily-reminders) | v2.1.0 | Daily task manager with Telegram delivery, SQLite backend (Node.js), snooze, subtasks, and procrastination reports |
 
-## daily-reminders v2
+## daily-reminders v2.1.0
 
 A daily task management system for OpenClaw. Sends pending tasks via Telegram with interactive inline buttons. Backed by SQLite (Node.js built-in) with JSON fallback.
 
@@ -28,6 +28,27 @@ node skills/daily-reminders/scripts/init.mjs /path/to/workspace
 The init script detects SQLite availability, asks for your preferences (frequency, time window, snooze options), and migrates any existing task data.
 
 **Requirements:** Node.js ≥ 22.5 (for `node:sqlite` built-in). Older Node falls back to `better-sqlite3` (auto-install offered) or JSON mode.
+
+## Changelog
+
+### daily-reminders v2.1.0 (2026-03-23)
+- **fix:** `markDone` always closes task on today's date, removes any future-dated entry (e.g. task rescheduled to tomorrow and then marked done same day)
+- **fix:** Historical stats and daily report now exclude future dates
+
+### daily-reminders v2.0.0 (2026-03-23)
+- Full rewrite with SQLite backend via `node:sqlite` (built-in Node ≥22.5)
+- Interactive init script with SQLite detection and JSON fallback
+- Per-task Telegram inline buttons: Done, Snooze, Tomorrow, Next week
+- Configurable snooze durations
+- Subtasks with parent_id relation
+- Full action history (task_log) for procrastination tracking
+- Daily report cron at 20:00 with completion stats and 7-day trend
+- Migration script from v1 JSON format
+
+### daily-reminders v1.0.0
+- Basic daily task list via WhatsApp
+- Check-off by replying a number
+- Recurring tasks reset at midnight
 
 ## Installation
 
